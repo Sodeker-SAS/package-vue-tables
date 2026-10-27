@@ -1,0 +1,9 @@
+{
+    "name": "@sodeker/vue-tables",
+    "private": true,
+    "type": "module",
+    "description": "Fuente Vue del paquete Composer sodeker/vue-tables. No se publica en npm ni tiene build propio: lo compila el Vite de cada aplicación.",
+    "peerDependencies": {
+        "vue": "^3.4"
+    }
+}

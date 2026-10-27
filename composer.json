@@ -1,0 +1,10 @@
+{
+    "name": "sodeker/vue-tables",
+    "description": "Tablas Vue compartidas por los proyectos de Sódeker.",
+    "type": "library",
+    "license": "proprietary",
+    "keywords": ["sodeker", "vue", "datatable", "design-system"],
+    "config": {
+        "sort-packages": true
+    }
+}
