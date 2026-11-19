@@ -14,7 +14,7 @@ Funciona igual que [`package-doma-frontend`](https://github.com/Sodeker-SAS/pack
 resources/
 ├── index.js          punto de entrada público: import { … } from '@vue-tables'
 ├── components/       tablas (SFC con <script setup>)
-└── utils/            funciones sin Vue: orden y paginación
+└── utils/            funciones sin Vue: orden, paginación, reordenar listas y atajos de teclado
 vite.js               plugin de Vite que conecta el paquete con la app
 package.json          solo declara peerDependencies; no se instala
 ```
@@ -22,7 +22,7 @@ package.json          solo declara peerDependencies; no se instala
 ## Uso desde una aplicación
 
 ```js
-import { DataTable } from '@vue-tables';
+import { DataTable, EditableTable } from '@vue-tables';
 ```
 
 No hay hoja de estilos global que importar: cada tabla trae sus estilos.
@@ -156,6 +156,123 @@ de la página recibida.
 - Los vacíos van siempre al final, se ordene hacia arriba o hacia abajo. El texto se ordena
   natural y sin distinguir tildes ni mayúsculas ("item 2" antes de "item 10").
 - `paging-type` y `pagination-labels` ya no existen: el pie es el mismo en todas las tablas.
+
+### `EditableTable`
+
+La tabla de captura: filas y columnas que el usuario arma y llena (detalles de un documento,
+tablas de parámetros, matrices de valores). No sabe qué hay en cada celda: la app pinta los campos
+por slot, así sirve para cualquier grilla.
+
+Es **controlada**: nunca modifica `columns` ni `rows`. Reordenar columnas emite `update:columns`
+con el nuevo orden (sirve `v-model:columns`); agregar o quitar filas y columnas solo avisa con un
+evento y la app decide (confirmar, abrir un modal, armar la fila nueva…). Cada acción se enciende
+o se apaga con props.
+
+```vue
+<EditableTable
+    v-model:columns="columnas"
+    :rows="filas"
+    row-key="id"
+    can-add-columns
+    can-edit-columns
+    can-remove-columns
+    can-reorder-columns
+    add-row-shortcut="Alt+A"
+    @add-column="abrirModalColumna()"
+    @edit-column="abrirModalColumna"
+    @remove-column="quitarColumna"
+    @add-row="filas.push({ id: nuevoId(), valores: {} })"
+    @remove-row="(fila, indice) => filas.splice(indice, 1)"
+>
+    <template #cell="{ row, column }">
+        <input v-model="row.valores[column.key]" class="form-control form-control-sm">
+    </template>
+</EditableTable>
+```
+
+Uso mínimo, solo para capturar filas en columnas fijas:
+
+```vue
+<EditableTable :columns="[{ key: 'producto', label: 'Producto' }, { key: 'cantidad', label: 'Cantidad', align: 'end' }]"
+               :rows="lineas" row-key="id" @add-row="agregarLinea" @remove-row="quitarLinea">
+    <template #cell-cantidad="{ row }"><input v-model="row.cantidad" type="number" class="form-control"></template>
+</EditableTable>
+```
+
+#### Columnas (`columns`)
+
+| Campo | Para qué |
+|---|---|
+| `key` | Identifica la columna (o el campo que diga `column-key`) y nombra su slot `cell-{key}` |
+| `label` | Rótulo del encabezado |
+| `width`, `minWidth` | Ancho fijo o mínimo (`'120px'`, `'20%'`) |
+| `align` | `start` (por defecto), `center` o `end` |
+| `wrap` | La celda puede partirse en varias líneas |
+| `headerClass`, `cellClass` | Clases extra del encabezado o de las celdas de esa columna |
+| `draggable`, `editable`, `removable` | En `false` bloquean esa acción solo en esa columna |
+
+Cualquier otro campo (un tipo, una unidad…) llega tal cual a los slots y eventos.
+
+#### Props
+
+| Prop | Por defecto | Para qué |
+|---|---|---|
+| `columns`, `rows` | — | Columnas y filas |
+| `id` | — | `id` del `<table>` |
+| `row-key` | posición | Campo que identifica cada fila, o función `(row, index) => llave` |
+| `column-key` | `key` | Campo que identifica cada columna |
+| `cell-value` | `row[column.key]` | Valor que se muestra en la celda sin slot: `(row, column) => valor` |
+| `can-add-rows` | `true` | Fila «Nueva fila» al pie |
+| `can-remove-rows` | `true` | Papelera en cada fila |
+| `can-add-columns` | `false` | Botón + en el encabezado |
+| `can-edit-columns` | `false` | Clic en el rótulo y ✎ en cada columna |
+| `can-remove-columns` | `false` | Papelera en cada columna |
+| `can-reorder-columns` | `false` | Arrastrar el encabezado; con el foco en él, también Alt+← y Alt+→ |
+| `readonly` | `false` | Oculta todas las acciones |
+| `max-rows`, `max-columns` | — | Topes: al llegar, el botón de agregar se oculta |
+| `add-row-shortcut` | — | Atajo para agregar fila: `'Alt+A'`, `'Ctrl+Enter'`… Letras y dígitos por la tecla física, así Option+A funciona en Mac |
+| `shortcut-scope` | `focus` | `focus`: el atajo solo actúa con el foco dentro de la tabla. `global`: en toda la página |
+| `focus-new-row` | `true` | Al aparecer una fila nueva, el foco va a su primer campo |
+| `row-numbers` | `true` | Número de fila en la primera columna |
+| `bordered` | `true` | Líneas entre columnas y borde alrededor |
+| `striped` | `false` | Filas alternadas |
+| `flush` | `false` | A ras de la tarjeta, como el `DataTable` |
+| `size` | `md` | `sm` para celdas compactas con campos pequeños |
+| `column-tools` | `hover` | `hover`: ✎ y papelera aparecen al pasar el puntero (siempre en pantallas táctiles). `always`: siempre |
+| `sticky-add-row` | `true` | «Nueva fila» sigue visible aunque la tabla se desplace a la derecha |
+| `hide-number-spinners` | `true` | Quita las flechas de los campos numéricos de las celdas |
+| `row-class` | — | Clase extra por fila: fija o `(row, index) => …` |
+| `add-row-label`, `add-column-label`, `edit-column-label`, `remove-column-label`, `remove-row-label`, `drag-column-label` | rótulos en español | Textos de los botones y sus ayudas |
+| `empty-text` | `Sin filas.` | Texto con columnas y sin filas |
+| `no-columns-text` | `Sin columnas.` | Texto sin columnas |
+
+#### Slots
+
+| Slot | Props | Para qué |
+|---|---|---|
+| `cell-{key}` | `row`, `column`, `rowIndex`, `columnIndex`, `value` | Contenido de la celda de una columna |
+| `cell` | los mismos | Contenido de cualquier celda sin slot propio (útil con columnas dinámicas) |
+| `head-{key}`, `head` | `column`, `index` | Rótulo del encabezado |
+| `column-tools` | `column`, `index` | Botones extra junto a ✎ y la papelera |
+| `row-actions` | `row`, `rowIndex` | Reemplaza la papelera de la fila |
+| `add-row` | `add` | Reemplaza el contenido de la fila «Nueva fila»; `add()` agrega |
+| `empty`, `no-columns` | — | Reemplazan los textos vacíos |
+| `footer` | `columns`, `totalColumns` | Filas propias en el `<tfoot>` (totales, por ejemplo) |
+
+#### Eventos
+
+| Evento | Carga | Cuándo |
+|---|---|---|
+| `update:columns` | columnas en el nuevo orden | El usuario mueve una columna |
+| `column-moved` | `{ column, from, to }` | Lo mismo, con el detalle del movimiento |
+| `add-column` | — | Clic en + |
+| `edit-column` | `column`, `index` | Clic en el rótulo o en ✎ |
+| `remove-column` | `column`, `index` | Clic en la papelera de la columna |
+| `add-row` | — | Clic en «Nueva fila» o el atajo |
+| `remove-row` | `row`, `index` | Clic en la papelera de la fila |
+
+La utilidad `moveItem(lista, desde, hasta)` también se exporta, por si la app reordena por su
+cuenta: devuelve una copia sin tocar la original.
 
 ## Probar sin publicar
 
