@@ -4,6 +4,22 @@ Cambios de `sodeker/vue-tables`. Las versiones siguen [SemVer](https://semver.or
 mientras el diseño se define van en `0.x`, y un cambio que obliga a ajustar las apps sube el
 número del medio.
 
+## [0.0.2] - 2026-11-19
+
+**Acción en la app:** ninguna para lo que ya existe: el `DataTable` no cambia. Para usar la tabla
+nueva, `composer update sodeker/vue-tables` e importar `EditableTable` desde `@vue-tables`.
+
+### Agregado
+
+- `EditableTable`: tabla de captura con columnas y filas que el usuario arma y llena. Controlada
+  (emite eventos y `update:columns`, nunca modifica sus props) y genérica: las celdas se pintan por
+  slot (`cell`, `cell-{key}`). Cada acción se activa con props: agregar, editar, eliminar y mover
+  columnas (arrastre o Alt+←/→), agregar y eliminar filas, topes, solo lectura y atajo de teclado
+  con alcance de foco o global. Fila «Nueva fila» fija al desplazar en horizontal, líneas entre
+  columnas, tamaño compacto y campos numéricos sin flechas. Mismas variables `--vt-*` del tema.
+- Utilidades `moveItem` (`utils/reorder.js`, exportada) y `parseShortcut`/`matchesShortcut`
+  (`utils/shortcut.js`).
+
 ## [0.0.1] - 2026-10-27
 
 Primera versión: se instala en las apps sin usarla todavía en ninguna vista. La migración de los

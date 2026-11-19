@@ -5,3 +5,5 @@
  *     import { DataTable } from '@vue-tables';
  */
 export { default as DataTable } from './components/DataTable.vue';
+export { default as EditableTable } from './components/EditableTable.vue';
+export { moveItem } from './utils/reorder.js';
