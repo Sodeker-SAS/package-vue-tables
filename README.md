@@ -70,13 +70,15 @@ reventaba la tabla (`insertBefore` de `null`) y reordenar borraba clases; eso ya
 |---|---|
 | `key` | Campo del ítem que se muestra y nombre de sus slots |
 | `label` | Rótulo del encabezado |
-| `width` | Ancho (`'20%'`, `'120px'`). Con alguna columna con ancho, la tabla usa `table-layout: fixed` y lo que no cabe termina en "…" |
+| `width` | Ancho (`'20%'`, `'120px'`). Con alguna columna con ancho, la tabla usa `table-layout: fixed` y lo que no cabe termina en "…" (salvo con `truncate-labels` en `false`) |
 | `align` | `start` (por defecto), `center` o `end`. En `end` la flecha de orden va a la izquierda del rótulo |
 | `orderable` | `false`: la columna no se ordena. `sortable: false` (SAT) hace lo mismo |
 | `sortKey` | Campo por el que se ordena en lugar de `key` (p. ej. la fecha ISO detrás de una fecha formateada) |
 | `sortType` | `text` (por defecto), `number` o `date`. `date` entiende ISO y `dd/mm/aaaa` |
 | `highlight` | El valor en el primario y en negrita |
 | `wrap` | La celda puede partirse en varias líneas |
+| `group` | Clave del grupo: las columnas seguidas del mismo grupo comparten un rótulo encima (ver `header-groups`) |
+| `sticky` | `true`: la columna queda fija a la izquierda al desplazar la tabla de lado. Solo las primeras columnas seguidas, y sin grupo |
 
 #### Props
 
@@ -99,6 +101,8 @@ reventaba la tabla (`insertBefore` de `null`) y reordenar borraba clases; eso ya
 | `uppercase` | `true` | Datos de las filas en mayúsculas, como lo hacía el `DataTable.vue` de cada proyecto |
 | `summary-rows` | `[]` | Totales al pie, en las dos últimas columnas: `[{ label, value, highlight? }]` |
 | `empty-text` | `Sin registros.` | Texto de la tabla sin filas |
+| `header-groups` | `{}` | Rótulo y clases de cada grupo de columnas: `{ eggs: { label: 'Huevos', class: 'bg-warning-subtle text-warning' } }` |
+| `truncate-labels` | `true` | `false`: los rótulos del encabezado nunca se recortan; el rótulo completo es el ancho mínimo de su columna y, si la tabla no cabe, se desplaza de lado |
 
 #### Slots
 
@@ -106,6 +110,7 @@ reventaba la tabla (`insertBefore` de `null`) y reordenar borraba clases; eso ya
 |---|---|---|
 | `cell-{key}` | `item`, `header`, `value`, `index` | Contenido de la celda |
 | `head-{key}` (o `header-{key}`) | `header` | Contenido del encabezado |
+| `group-{grupo}` | `group` (`{ group, label, class, colspan }`) | Rótulo de un grupo de columnas |
 | `empty` | — | Reemplaza el estado sin registros |
 | `footer` | `headers` | Filas propias dentro del `<tfoot>` (totales, por ejemplo) |
 | `summary-label`, `summary-value` | `row`, `index` | Cada línea de `summary-rows` |
@@ -133,6 +138,30 @@ reventaba la tabla (`insertBefore` de `null`) y reordenar borraba clases; eso ya
 Los valores del diseño son variables CSS `--vt-*` al comienzo de los estilos del componente,
 todas tomadas del tema (`--vz-*`).
 
+#### Grupos de columnas y columnas fijas
+
+Para tablas anchas, como un listado con el saldo inicial, el movimiento y el saldo final de varios
+recursos. Con alguna columna con `group` el encabezado tiene dos filas: arriba el rótulo de cada
+grupo y las columnas sin grupo (que ocupan las dos filas); abajo, las columnas de cada grupo. Una
+línea separa cada grupo, también en las filas. Las primeras columnas con `sticky` quedan a la vista
+al desplazar la tabla de lado.
+
+```vue
+<DataTable
+    :headers="[
+        { label: 'Galpón', key: 'name', sticky: true },
+        { label: 'Lote', key: 'lot', sticky: true },
+        { label: 'Inicial', key: 'eggsInitial', group: 'eggs', align: 'end', sortType: 'number' },
+        { label: 'Producción', key: 'eggs', group: 'eggs', align: 'end', sortKey: 'eggsQuantity', sortType: 'number' },
+        { label: 'Final', key: 'eggsFinal', group: 'eggs', align: 'end', sortType: 'number' },
+        { label: 'Agua', key: 'water', align: 'end', sortType: 'number' },
+    ]"
+    :header-groups="{ eggs: { label: 'Huevos', class: 'bg-warning-subtle text-warning' } }"
+    :items="galpones"
+    :truncate-labels="false"
+/>
+```
+
 #### Paginación en el servidor
 
 Con `server-pagination` la tabla recibe solo la página actual y su meta, pinta el pie con esos
@@ -156,6 +185,9 @@ de la página recibida.
 - Los vacíos van siempre al final, se ordene hacia arriba o hacia abajo. El texto se ordena
   natural y sin distinguir tildes ni mayúsculas ("item 2" antes de "item 10").
 - `paging-type` y `pagination-labels` ya no existen: el pie es el mismo en todas las tablas.
+- `header-groups`, `group` y `sticky` funcionan igual que en el `DataTable.vue` de Sai: migrar
+  una tabla agrupada sigue siendo cambiar el import. Lo que antes se lograba con
+  `:deep(.dt-th-label)` para no recortar los rótulos ahora es `:truncate-labels="false"`.
 
 ### `EditableTable`
 
@@ -237,6 +269,7 @@ Cualquier otro campo (un tipo, una unidad…) llega tal cual a los slots y event
 | `bordered` | `true` | Líneas entre columnas y borde alrededor |
 | `striped` | `false` | Filas alternadas |
 | `flush` | `false` | A ras de la tarjeta, como el `DataTable` |
+| `page-length` | `0` | Filas por página, con el paginador del `DataTable`; `0`, todas sin paginador. El número de fila y el índice de eventos y slots siguen siendo los de `rows`; al agregar una fila se muestra su página |
 | `size` | `md` | `sm` para celdas compactas con campos pequeños |
 | `column-tools` | `hover` | `hover`: ✎ y papelera aparecen al pasar el puntero (siempre en pantallas táctiles). `always`: siempre |
 | `sticky-add-row` | `true` | «Nueva fila» sigue visible aunque la tabla se desplace a la derecha |

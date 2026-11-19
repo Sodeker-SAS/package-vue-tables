@@ -11,6 +11,7 @@
  * modal, armar la fila nueva…). Cada acción se enciende o se apaga con props.
  */
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { paginationItems } from '../utils/pagination.js';
 import { moveItem } from '../utils/reorder.js';
 import { matchesShortcut, parseShortcut } from '../utils/shortcut.js';
 
@@ -69,6 +70,8 @@ const props = defineProps({
     stickyAddRow: { type: Boolean, default: true },
     /** Quita las flechas de subir y bajar de los campos numéricos de las celdas. */
     hideNumberSpinners: { type: Boolean, default: true },
+    /** Filas por página, con el mismo paginador del DataTable. 0: todas, sin paginador. */
+    pageLength: { type: Number, default: 0 },
     /** Clase extra por fila: fija o `(row, index) => string|object|array`. */
     rowClass: { type: [Function, String, Array, Object], default: null },
 
@@ -197,6 +200,38 @@ async function onHeaderKeydown(event, index) {
     root.value?.querySelectorAll('thead .vt-editable__column')[to]?.focus();
 }
 
+/* ---------- Paginación ---------- */
+
+// Cliente, como el DataTable: se pinta solo la página actual, pero el número de
+// fila y el índice de los eventos y slots siguen siendo los de `rows`.
+const page = ref(1);
+const paginated = computed(() => props.pageLength > 0);
+const perPage = computed(() => (paginated.value ? props.pageLength : Math.max(props.rows.length, 1)));
+const lastPage = computed(() => Math.max(1, Math.ceil(props.rows.length / perPage.value)));
+const firstIndex = computed(() => (page.value - 1) * perPage.value);
+const pageRows = computed(() => props.rows.slice(firstIndex.value, firstIndex.value + perPage.value));
+const pages = computed(() => paginationItems(page.value, lastPage.value));
+
+const rangeText = computed(() => {
+    const total = props.rows.length;
+    const noun = total === 1 ? 'fila' : 'filas';
+    const last = Math.min(firstIndex.value + perPage.value, total);
+    return `${firstIndex.value + 1}–${last} de ${total.toLocaleString('es-CO')} ${noun}`;
+});
+
+function goToPage(target) {
+    if (target >= 1 && target <= lastPage.value) page.value = target;
+}
+
+function pageOf(index) {
+    return Math.floor(index / perPage.value) + 1;
+}
+
+// Al quitar filas la página puede dejar de existir: queda en la última.
+watch(lastPage, (last) => {
+    if (page.value > last) page.value = last;
+});
+
 /* ---------- Filas ---------- */
 
 function requestAddRow() {
@@ -205,16 +240,19 @@ function requestAddRow() {
 
 const FOCUSABLE = 'input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled]), [contenteditable="true"]';
 
-// Al aparecer filas nuevas, el foco va al primer campo de la primera de ellas.
+// Al aparecer filas nuevas se muestra la página de la primera de ellas y el
+// foco va a su primer campo.
 watch(
     () => props.rows.map((row, index) => rowId(row, index)),
     async (keys, previous) => {
-        if (!props.focusNewRow || !previous || keys.length <= previous.length) return;
+        if (!previous || keys.length <= previous.length) return;
         const before = new Set(previous);
         const index = keys.findIndex((key) => !before.has(key));
         if (index < 0) return;
+        page.value = pageOf(index);
+        if (!props.focusNewRow) return;
         await nextTick();
-        body.value?.querySelectorAll(':scope > tr.vt-editable__row')[index]?.querySelector(FOCUSABLE)?.focus();
+        body.value?.querySelectorAll(':scope > tr.vt-editable__row')[index - firstIndex.value]?.querySelector(FOCUSABLE)?.focus();
     },
 );
 
@@ -349,12 +387,12 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown));
                     </tr>
                     <template v-else>
                         <tr
-                            v-for="(row, rowIndex) in rows"
-                            :key="rowId(row, rowIndex)"
+                            v-for="(row, offset) in pageRows"
+                            :key="rowId(row, firstIndex + offset)"
                             class="vt-editable__row"
-                            :class="rowClasses(row, rowIndex)"
+                            :class="rowClasses(row, firstIndex + offset)"
                         >
-                            <td v-if="rowNumbers" class="vt-editable__index">{{ rowIndex + 1 }}</td>
+                            <td v-if="rowNumbers" class="vt-editable__index">{{ firstIndex + offset + 1 }}</td>
                             <td
                                 v-for="(column, columnIndex) in columns"
                                 :key="columnId(column, columnIndex)"
@@ -364,7 +402,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown));
                                     :name="`cell-${columnId(column, columnIndex)}`"
                                     :row="row"
                                     :column="column"
-                                    :rowIndex="rowIndex"
+                                    :rowIndex="firstIndex + offset"
                                     :columnIndex="columnIndex"
                                     :value="cellValue(row, column)"
                                 >
@@ -372,7 +410,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown));
                                         name="cell"
                                         :row="row"
                                         :column="column"
-                                        :rowIndex="rowIndex"
+                                        :rowIndex="firstIndex + offset"
                                         :columnIndex="columnIndex"
                                         :value="cellValue(row, column)"
                                     >
@@ -381,14 +419,14 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown));
                                 </slot>
                             </td>
                             <td v-if="hasActionsColumn" class="vt-editable__actions">
-                                <slot name="row-actions" :row="row" :rowIndex="rowIndex">
+                                <slot name="row-actions" :row="row" :rowIndex="firstIndex + offset">
                                     <button
                                         v-if="showRemoveRow"
                                         type="button"
                                         class="vt-editable__icon is-danger is-soft"
                                         :title="removeRowLabel"
-                                        :aria-label="`${removeRowLabel} ${rowIndex + 1}`"
-                                        @click="emit('remove-row', row, rowIndex)"
+                                        :aria-label="`${removeRowLabel} ${firstIndex + offset + 1}`"
+                                        @click="emit('remove-row', row, firstIndex + offset)"
                                     >
                                         <i class="ri-delete-bin-5-line" aria-hidden="true"></i>
                                     </button>
@@ -415,6 +453,44 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown));
                     <slot name="footer" :columns="columns" :totalColumns="totalColumns" />
                 </tfoot>
             </table>
+        </div>
+
+        <div v-if="paginated && rows.length" class="vt-editable__footer">
+            <div class="vt-editable__range" role="status" aria-live="polite">{{ rangeText }}</div>
+
+            <nav v-if="lastPage > 1" class="vt-editable__pagination" aria-label="Páginas">
+                <button
+                    type="button"
+                    class="vt-editable__page"
+                    aria-label="Anterior"
+                    :disabled="page <= 1"
+                    @click="goToPage(page - 1)"
+                >
+                    <i class="ri-arrow-left-s-line" aria-hidden="true"></i>
+                </button>
+                <template v-for="entry in pages" :key="`${entry.type}-${entry.value}`">
+                    <span v-if="entry.type === 'ellipsis'" class="vt-editable__page is-ellipsis" aria-hidden="true">…</span>
+                    <button
+                        v-else
+                        type="button"
+                        class="vt-editable__page"
+                        :class="{ 'is-active': entry.value === page }"
+                        :aria-current="entry.value === page ? 'page' : undefined"
+                        @click="goToPage(entry.value)"
+                    >
+                        {{ entry.value }}
+                    </button>
+                </template>
+                <button
+                    type="button"
+                    class="vt-editable__page"
+                    aria-label="Siguiente"
+                    :disabled="page >= lastPage"
+                    @click="goToPage(page + 1)"
+                >
+                    <i class="ri-arrow-right-s-line" aria-hidden="true"></i>
+                </button>
+            </nav>
         </div>
     </div>
 </template>
@@ -462,7 +538,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown));
 
 .vt-editable.is-bordered .vt-editable__frame {
     border: var(--vt-line);
-    border-radius: var(--vt-radius);
+    border-radius: 0;
 }
 
 /* A ras de la tarjeta, como el DataTable: sale del relleno del card-body. */
@@ -557,7 +633,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown));
 }
 
 .vt-editable__label {
-    color: var(--vt-text);
+    color: var(--vt-muted);
     font-weight: 600;
 }
 
@@ -730,5 +806,79 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown));
     .vt-editable__tools {
         transition: none;
     }
+}
+
+/* ---------- Pie: rango y páginas (los mismos del DataTable) ---------- */
+
+.vt-editable__footer {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    padding-top: 0.75rem;
+    color: var(--vt-muted);
+}
+
+.vt-editable__range {
+    font-variant-numeric: tabular-nums;
+}
+
+.vt-editable__pagination {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.25rem;
+}
+
+.vt-editable__page {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 2rem;
+    height: 2rem;
+    padding: 0 0.5rem;
+    border: 0;
+    border-radius: var(--vt-radius);
+    background-color: transparent;
+    color: var(--vt-text);
+    font: inherit;
+    font-variant-numeric: tabular-nums;
+    cursor: pointer;
+    transition: background-color 0.15s ease, color 0.15s ease;
+}
+
+.vt-editable__page i {
+    font-size: 1.1rem;
+    line-height: 1;
+}
+
+.vt-editable__page:hover:not(:disabled):not(.is-active):not(.is-ellipsis) {
+    background-color: var(--vz-tertiary-bg, #f3f6f9);
+}
+
+.vt-editable__page:focus-visible {
+    outline: 2px solid rgba(var(--vt-primary-rgb), 0.45);
+    outline-offset: 1px;
+}
+
+/* La página actual, en tono suave del primario. */
+.vt-editable__page.is-active {
+    background-color: rgba(var(--vt-primary-rgb), 0.12);
+    color: var(--vt-primary-ink);
+    font-weight: 600;
+    cursor: default;
+}
+
+.vt-editable__page:disabled {
+    opacity: 0.4;
+    cursor: default;
+}
+
+.vt-editable__page.is-ellipsis {
+    min-width: 1.5rem;
+    padding: 0;
+    color: var(--vt-muted);
+    cursor: default;
 }
 </style>
