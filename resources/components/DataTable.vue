@@ -13,7 +13,7 @@
  * - Servidor (`server-pagination`): recibe solo la página actual y su meta;
  *   ordena dentro de la página y avisa el cambio de página con `page-changed`.
  */
-import { computed, onMounted, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { compareSortValues, sortValue, SORT_TYPES } from '../utils/sorting.js';
 import { paginationItems } from '../utils/pagination.js';
 
@@ -22,9 +22,21 @@ const props = defineProps({
     id: { type: String, default: null },
     /**
      * Columnas: { key, label, width?, align?: 'start'|'center'|'end',
-     * orderable?: false (o sortable: false), sortKey?, sortType?, highlight?, wrap? }
+     * orderable?: false (o sortable: false), sortKey?, sortType?, highlight?, wrap?,
+     * group?, sticky? }
+     *
+     * - `group`: clave del grupo (ver `header-groups`); las columnas seguidas del
+     *   mismo grupo comparten un rótulo encima.
+     * - `sticky`: las primeras columnas seguidas con `sticky: true` quedan fijas a
+     *   la izquierda al desplazar la tabla de lado. Van al inicio y sin grupo.
      */
     headers: { type: Array, required: true },
+    /**
+     * Rótulo de cada grupo de columnas y, si se quiere, sus clases:
+     * `{ eggs: { label: 'Huevos', class: 'bg-warning-subtle text-warning' } }`.
+     * Sin ninguna columna con `group`, el encabezado es de una sola fila.
+     */
+    headerGroups: { type: Object, default: () => ({}) },
     items: { type: Array, required: true },
     /** Campo que identifica cada ítem: llave de la fila y de `highlighted-key`. */
     itemKey: { type: String, default: null },
@@ -55,6 +67,12 @@ const props = defineProps({
     /** Totales al pie, en las dos últimas columnas: [{ label, value, highlight? }]. */
     summaryRows: { type: Array, default: () => [] },
     emptyText: { type: String, default: 'Sin registros.' },
+    /**
+     * Con `false` los rótulos del encabezado nunca se recortan: el rótulo completo
+     * es el ancho mínimo de su columna y, si la tabla no cabe, se desplaza de lado.
+     * Con `true` (por defecto) y anchos propios, lo que no cabe termina en «…».
+     */
+    truncateLabels: { type: Boolean, default: true },
 });
 
 const emit = defineEmits(['row-click', 'row-selected', 'sort-changed', 'page-changed']);
@@ -65,6 +83,9 @@ const INTERACTIVE = 'a, button, input, select, textarea, label, [role="button"],
 /* ---------- Columnas ---------- */
 
 const hasCustomWidths = computed(() => props.headers.some((header) => Boolean(header.width)));
+// Anchos fijos (`table-layout: fixed`) solo si los rótulos se pueden recortar: con
+// `truncate-labels` en false los anchos son el mínimo y la tabla crece.
+const fixedLayout = computed(() => hasCustomWidths.value && props.truncateLabels);
 
 function isOrderable(header) {
     return !props.preserveOrder && header?.orderable !== false && header?.sortable !== false;
@@ -80,6 +101,126 @@ function sortTypeOf(header) {
 
 function cellClass(header) {
     return { 'is-center': header.align === 'center', 'is-end': header.align === 'end', 'is-wrap': header.wrap };
+}
+
+/* ---------- Grupos de columnas ---------- */
+
+const hasHeaderGroups = computed(() => props.headers.some((header) => Boolean(header.group)));
+
+/**
+ * Las filas del encabezado. Sin grupos, una fila con todas las columnas. Con
+ * grupos, arriba el rótulo de cada grupo (`colspan`) y las columnas sin grupo
+ * (`rowspan` 2); abajo, las columnas de cada grupo. Cada columna conserva su
+ * índice, así el orden y las clases no cambian.
+ */
+const headerRows = computed(() => {
+    const column = (header, index, rowspan = 1) => ({ kind: 'column', key: `c-${index}`, header, index, rowspan });
+
+    if (!hasHeaderGroups.value) {
+        return [props.headers.map((header, index) => column(header, index))];
+    }
+
+    const top = [];
+    const bottom = [];
+
+    props.headers.forEach((header, index) => {
+        if (!header.group) {
+            top.push(column(header, index, 2));
+            return;
+        }
+
+        const last = top[top.length - 1];
+        if (last?.kind === 'group' && last.group === header.group) {
+            last.colspan += 1;
+        } else {
+            const group = props.headerGroups?.[header.group] ?? {};
+            top.push({
+                kind: 'group',
+                key: `g-${index}`,
+                start: index,
+                group: header.group,
+                label: group.label ?? header.group,
+                class: group.class ?? '',
+                colspan: 1,
+            });
+        }
+
+        bottom.push(column(header, index));
+    });
+
+    return [top, bottom];
+});
+
+/** La primera y la última columna de la tabla llevan el relleno de la tarjeta. */
+function edgeClass(first, last) {
+    return { 'is-first': first === 0, 'is-last': last === props.headers.length - 1 };
+}
+
+/** Línea al inicio de cada grupo (y en la columna que lo cierra) y aire al final. */
+function groupClass(index) {
+    if (!hasHeaderGroups.value) {
+        return null;
+    }
+    const group = props.headers[index]?.group ?? null;
+    const previous = index > 0 ? (props.headers[index - 1]?.group ?? null) : null;
+    const next = props.headers[index + 1]?.group ?? null;
+
+    return {
+        'is-group-start': index > 0 && group !== previous,
+        'is-group-end': group !== null && next !== group,
+    };
+}
+
+/* ---------- Columnas fijas ---------- */
+
+const tableEl = ref(null);
+let stickyObserver = null;
+
+/** Las primeras columnas seguidas con `sticky: true`. */
+const stickyCount = computed(() => {
+    const index = props.headers.findIndex((header) => !header.sticky);
+    return index === -1 ? props.headers.length : index;
+});
+
+function stickyClass(index) {
+    return index < stickyCount.value
+        ? { 'is-sticky': true, 'is-sticky-last': index === stickyCount.value - 1 }
+        : null;
+}
+
+function stickyStyle(index) {
+    return index < stickyCount.value ? { left: `var(--vt-sticky-${index}, 0px)` } : null;
+}
+
+/**
+ * Cada columna fija se pega a la izquierda en la suma de los anchos de las
+ * anteriores. Los anchos los decide el navegador, así que se miden y se vuelven
+ * a medir si cambian; van en variables CSS de la tabla, no en cada celda.
+ */
+function observeSticky() {
+    stickyObserver?.disconnect();
+    stickyObserver = null;
+
+    const table = tableEl.value;
+    if (!table || stickyCount.value === 0) {
+        return;
+    }
+
+    const cells = Array.from(table.querySelectorAll(':scope > thead th.is-sticky'));
+    const measure = () => {
+        let left = 0;
+        cells.forEach((cell, index) => {
+            table.style.setProperty(`--vt-sticky-${index}`, `${left}px`);
+            left += cell.getBoundingClientRect().width;
+        });
+    };
+
+    measure();
+
+    if (typeof ResizeObserver !== 'undefined') {
+        stickyObserver = new ResizeObserver(measure);
+        cells.forEach((cell) => stickyObserver.observe(cell));
+    }
 }
 
 /* ---------- Orden ---------- */
@@ -264,13 +405,24 @@ watch(() => props.headers.map((header) => header.key).join('|'), () => {
     }
 });
 
+// Otras columnas u otras fijas: se vuelven a medir cuando el DOM ya cambió.
+watch(
+    () => props.headers.map((header) => `${header.key}:${header.sticky ? 1 : 0}:${header.group ?? ''}`).join('|'),
+    () => nextTick(observeSticky),
+);
+
 watch(lastPage, (last) => {
     if (page.value > last) {
         page.value = last;
     }
 });
 
-onMounted(emitSort);
+onMounted(() => {
+    emitSort();
+    observeSticky();
+});
+
+onBeforeUnmount(() => stickyObserver?.disconnect());
 </script>
 
 <template>
@@ -279,45 +431,63 @@ onMounted(emitSort);
         :class="{ 'vt-table--striped': striped, 'vt-table--uppercase': uppercase }"
     >
         <div class="vt-table__frame">
-            <table :id="id" class="vt-table__table" :class="{ 'is-fixed': hasCustomWidths }">
+            <table
+                :id="id"
+                ref="tableEl"
+                class="vt-table__table"
+                :class="{ 'is-fixed': fixedLayout, 'is-full-labels': !truncateLabels, 'is-grouped': hasHeaderGroups }"
+            >
                 <colgroup v-if="hasCustomWidths">
                     <col v-for="(header, index) in headers" :key="index" :style="header.width ? { width: header.width } : null">
                 </colgroup>
 
                 <thead>
-                    <tr>
-                        <th
-                            v-for="(header, index) in headers"
-                            :key="index"
-                            scope="col"
-                            :class="cellClass(header)"
-                            :aria-sort="ariaSort(header)"
-                        >
-                            <button
-                                v-if="isOrderable(header)"
-                                type="button"
-                                class="vt-table__sort"
-                                :class="{ 'is-sorted': sort.key === header.key }"
-                                @click="toggleSort(header)"
+                    <tr v-for="(row, rowIndex) in headerRows" :key="rowIndex">
+                        <template v-for="cell in row" :key="cell.key">
+                            <!-- Rótulo de un grupo de columnas. -->
+                            <th
+                                v-if="cell.kind === 'group'"
+                                scope="colgroup"
+                                :colspan="cell.colspan"
+                                class="vt-table__group is-center is-group-start"
+                                :class="[cell.class, edgeClass(cell.start, cell.start + cell.colspan - 1)]"
                             >
-                                <!-- data-label: reserva el ancho del rótulo en negrita (ver estilos). -->
-                                <span class="vt-table__label" :data-label="header.label">
+                                <slot :name="`group-${cell.group}`" :group="cell">{{ cell.label }}</slot>
+                            </th>
+                            <th
+                                v-else
+                                scope="col"
+                                :rowspan="cell.rowspan > 1 ? cell.rowspan : undefined"
+                                :class="[cellClass(cell.header), edgeClass(cell.index, cell.index), groupClass(cell.index), stickyClass(cell.index)]"
+                                :style="stickyStyle(cell.index)"
+                                :aria-sort="ariaSort(cell.header)"
+                            >
+                                <button
+                                    v-if="isOrderable(cell.header)"
+                                    type="button"
+                                    class="vt-table__sort"
+                                    :class="{ 'is-sorted': sort.key === cell.header.key }"
+                                    @click="toggleSort(cell.header)"
+                                >
+                                    <!-- data-label: reserva el ancho del rótulo en negrita (ver estilos). -->
+                                    <span class="vt-table__label" :data-label="cell.header.label">
+                                        <span class="vt-table__label-text">
+                                            <slot :name="`head-${cell.header.key}`" :header="cell.header">
+                                                <slot :name="`header-${cell.header.key}`" :header="cell.header">{{ cell.header.label }}</slot>
+                                            </slot>
+                                        </span>
+                                    </span>
+                                    <i class="vt-table__sort-icon" :class="sortIcon(cell.header)" aria-hidden="true"></i>
+                                </button>
+                                <span v-else class="vt-table__label">
                                     <span class="vt-table__label-text">
-                                        <slot :name="`head-${header.key}`" :header="header">
-                                            <slot :name="`header-${header.key}`" :header="header">{{ header.label }}</slot>
+                                        <slot :name="`head-${cell.header.key}`" :header="cell.header">
+                                            <slot :name="`header-${cell.header.key}`" :header="cell.header">{{ cell.header.label }}</slot>
                                         </slot>
                                     </span>
                                 </span>
-                                <i class="vt-table__sort-icon" :class="sortIcon(header)" aria-hidden="true"></i>
-                            </button>
-                            <span v-else class="vt-table__label">
-                                <span class="vt-table__label-text">
-                                    <slot :name="`head-${header.key}`" :header="header">
-                                        <slot :name="`header-${header.key}`" :header="header">{{ header.label }}</slot>
-                                    </slot>
-                                </span>
-                            </span>
-                        </th>
+                            </th>
+                        </template>
                     </tr>
                 </thead>
 
@@ -331,7 +501,12 @@ onMounted(emitSort);
                         @click="onRowClick($event, item)"
                         @keydown.enter="onRowEnter($event, item)"
                     >
-                        <td v-for="(header, column) in headers" :key="column" :class="cellClass(header)">
+                        <td
+                            v-for="(header, column) in headers"
+                            :key="column"
+                            :class="[cellClass(header), groupClass(column), stickyClass(column)]"
+                            :style="stickyStyle(column)"
+                        >
                             <slot
                                 :name="`cell-${header.key}`"
                                 :item="item"
@@ -451,6 +626,9 @@ onMounted(emitSort);
     /* Relleno de la tarjeta: la tabla llega a sus bordes y la primera columna
        queda alineada con el buscador y el título. */
     --vt-card-x: var(--vz-card-spacer-x, 1rem);
+    /* Separa los grupos de columnas y las columnas fijas: más marcada que el
+       borde normal, que casi no se distingue sobre las filas alternadas. */
+    --vt-group-line: var(--vz-border-color-translucent, rgba(0, 0, 0, 0.175));
 
     color: var(--vt-text);
     font-size: var(--vz-body-font-size, 0.8125rem);
@@ -486,12 +664,12 @@ onMounted(emitSort);
     white-space: nowrap;
 }
 
-.vt-table__table th:first-child,
+.vt-table__table th.is-first,
 .vt-table__table td:first-child {
     padding-left: var(--vt-card-x);
 }
 
-.vt-table__table th:last-child,
+.vt-table__table th.is-last,
 .vt-table__table td:last-child {
     padding-right: var(--vt-card-x);
 }
@@ -525,6 +703,64 @@ onMounted(emitSort);
     font-weight: 600;
     letter-spacing: 0.06em;
     text-transform: uppercase;
+}
+
+/* ---------- Grupos de columnas ---------- */
+
+/* El rótulo del grupo, más bajo que el de las columnas. */
+.vt-table__table thead th.vt-table__group {
+    padding-top: 0.4rem;
+    padding-bottom: 0.4rem;
+}
+
+.vt-table__table .is-group-start {
+    border-left: var(--vz-border-width, 1px) solid var(--vt-group-line);
+    padding-left: 1rem;
+}
+
+.vt-table__table .is-group-end {
+    padding-right: 1rem;
+}
+
+/* ---------- Columnas fijas ---------- */
+
+/* Se pintan con el fondo de la tarjeta para que no se vea lo que pasa por
+   debajo; el tono de la fila (cebra, hover, selección) va encima como imagen.
+   La última lleva una línea a la derecha: un borde no acompaña a una celda
+   fija, una pseudo-capa sí. */
+.vt-table__table th.is-sticky,
+.vt-table__table td.is-sticky {
+    position: sticky;
+    z-index: 1;
+}
+
+.vt-table__table thead th.is-sticky {
+    z-index: 3;
+    background-color: var(--vt-surface);
+    background-image: linear-gradient(var(--vt-head-bg), var(--vt-head-bg));
+}
+
+.vt-table__row > td.is-sticky {
+    background-color: var(--vt-surface);
+    background-image: linear-gradient(var(--vt-row-bg), var(--vt-row-bg));
+}
+
+.vt-table__table .is-sticky-last::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    width: var(--vz-border-width, 1px);
+    background: var(--vt-group-line);
+}
+
+/* ---------- Rótulos completos (`truncate-labels` en false) ---------- */
+
+.vt-table__table.is-full-labels .vt-table__label,
+.vt-table__table.is-full-labels .vt-table__label-text {
+    min-width: max-content;
+    overflow: visible;
 }
 
 .vt-table__sort {
@@ -624,21 +860,31 @@ onMounted(emitSort);
     --vt-zebra: rgba(var(--vz-body-color-rgb, 33, 37, 41), 0.025);
 }
 
-/* Cebra, puntero, selección y resaltado, en ese orden: cada uno pisa al anterior. */
-.vt-table__row:nth-child(even) > td {
-    background-color: var(--vt-zebra);
+/* Cebra, puntero, selección y resaltado, en ese orden: cada uno pisa al anterior.
+   El tono va en una variable de la fila para que las columnas fijas lo pinten
+   encima de su fondo opaco. */
+.vt-table__row {
+    --vt-row-bg: transparent;
 }
 
-.vt-table__row:hover > td {
-    background-color: var(--vt-hover-bg);
+.vt-table__row > td {
+    background-color: var(--vt-row-bg);
 }
 
-.vt-table__row.is-selected > td {
-    background-color: rgba(var(--vt-primary-rgb), 0.08);
+.vt-table__row:nth-child(even) {
+    --vt-row-bg: var(--vt-zebra);
 }
 
-.vt-table__row.is-highlighted > td {
-    background-color: var(--vz-primary-bg-subtle, #def1fb);
+.vt-table__row:hover {
+    --vt-row-bg: var(--vt-hover-bg);
+}
+
+.vt-table__row.is-selected {
+    --vt-row-bg: rgba(var(--vt-primary-rgb), 0.08);
+}
+
+.vt-table__row.is-highlighted {
+    --vt-row-bg: var(--vz-primary-bg-subtle, #def1fb);
 }
 
 .vt-table__row.is-clickable {
