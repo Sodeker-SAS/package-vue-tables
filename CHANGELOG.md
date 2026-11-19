@@ -4,9 +4,10 @@ Cambios de `sodeker/vue-tables`. Las versiones siguen [SemVer](https://semver.or
 mientras el diseño se define van en `0.x`, y un cambio que obliga a ajustar las apps sube el
 número del medio.
 
-## [Sin publicar]
+## [0.0.2] - 2026-11-19
 
-**Acción en la app:** ninguna. Es un componente nuevo: el `DataTable` no cambia.
+**Acción en la app:** ninguna para lo que ya existe: el `DataTable` no cambia. Para usar la tabla
+nueva, `composer update sodeker/vue-tables` e importar `EditableTable` desde `@vue-tables`.
 
 ### Agregado
 
